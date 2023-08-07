@@ -1,8 +1,4 @@
-mod common_reference_string;
-mod polynomial;
-mod r1cs;
-mod roots_of_unity;
-mod secret_point_powers;
-
-#[cfg(test)]
-mod tests {}
+pub mod common_reference_string;
+pub mod polynomial;
+pub mod r1cs;
+pub mod roots_of_unity;

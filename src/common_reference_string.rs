@@ -3,6 +3,8 @@ use pairing::PairingCurveAffine;
 
 use crate::{polynomial::Polynomial, r1cs::Qap};
 
+/// Get an array with powers of x on a curve, i.e. obtain G, xG, x^2G, etc.
+/// Uses the default generator.
 fn powers_of_x<
     const N: usize,
     Curve: PairingCurveAffine
@@ -14,6 +16,8 @@ fn powers_of_x<
     powers_of_x_with_generator(x, Curve::generator())
 }
 
+/// Get an array with powers of x on a curve. Given x and G, this will return
+/// `[G, xG, ...]`.
 fn powers_of_x_with_generator<
     const N: usize,
     Curve: PairingCurveAffine
@@ -30,13 +34,16 @@ fn powers_of_x_with_generator<
     powers
 }
 
+/// A common reference string for a particular computation.
 pub struct CommonReferenceString<
     const N: usize, // Highest power of x
     const N_MINUS_ONE: usize,
     const PUBLIC_WITNESS: usize,
     const PRIVATE_WITNESS: usize,
 > {
+    /// The CRS elements in the first curve group.
     g1: CommonReferenceStringG1<N, N_MINUS_ONE, PUBLIC_WITNESS, PRIVATE_WITNESS>,
+    /// The CRS elements in the second curve group.
     g2: CommonReferenceStringG2<N>,
 }
 
@@ -69,7 +76,9 @@ impl<
         const PRIVATE_WITNESS: usize,
     > CommonReferenceString<N, N_MINUS_ONE, PUBLIC_WITNESS, PRIVATE_WITNESS>
 {
-    fn new<const N_PLUS_ONE: usize>(
+    /// Build a new common reference string from the given trapdoor and
+    /// Quadratic Arithmetic Program.
+    pub fn new<const N_PLUS_ONE: usize>(
         alpha: Scalar,
         beta: Scalar,
         gamma: Scalar,
@@ -124,19 +133,48 @@ impl<
         }
     }
 }
+
 pub struct Proof {
     a: G1Affine,
     b: G2Affine,
     c: G1Affine,
 }
 
+impl Proof {
+    pub fn verify<
+        const N: usize, // Highest power of x
+        const N_MINUS_ONE: usize,
+        const PUBLIC_WITNESS: usize,
+        const PRIVATE_WITNESS: usize,
+    >(
+        &self,
+        crs: &CommonReferenceString<N, N_MINUS_ONE, PUBLIC_WITNESS, PRIVATE_WITNESS>,
+        public_assignment: &[Scalar; PUBLIC_WITNESS],
+    ) -> bool {
+        self.a.pairing_with(&self.b)
+        // Can be precomputed:
+        == crs.g1.alpha.pairing_with(&crs.g2.beta)
+        + G1Affine::from(public_assignment.iter()
+            .zip(crs.g1.public_contribs.iter())
+            .map(|(a, contrib)| a * contrib)
+            .sum::<G1Projective>()).pairing_with(&crs.g2.gamma)
+        + self.c.pairing_with(&crs.g2.delta)
+    }
+}
+
+/// Build a proof using a common reference string, a QAP and an assignment.
 pub fn prove<
     const N: usize, // Highest power of x
     const N_MINUS_ONE: usize,
     const PUBLIC_WITNESS: usize,
     const PRIVATE_WITNESS: usize,
 >(
-    common_reference_string: CommonReferenceString<N, N_MINUS_ONE, PUBLIC_WITNESS, PRIVATE_WITNESS>,
+    common_reference_string: &CommonReferenceString<
+        N,
+        N_MINUS_ONE,
+        PUBLIC_WITNESS,
+        PRIVATE_WITNESS,
+    >,
     qap: Qap<PUBLIC_WITNESS, PRIVATE_WITNESS>,
     public_assignment: [Scalar; PUBLIC_WITNESS],
     private_assignment: [Scalar; PRIVATE_WITNESS],
@@ -212,11 +250,9 @@ pub fn prove<
 
 #[cfg(test)]
 mod tests {
-    use bls12_381::Scalar;
-
     use crate::r1cs::{self, Qap};
 
-    use super::{CommonReferenceString, prove};
+    use super::{prove, CommonReferenceString};
 
     #[test]
     fn test_prove() {
@@ -229,6 +265,12 @@ mod tests {
             4756.into(),
             &qap,
         );
-        let proof = prove(crs, qap, r1cs::tests::R1CS_ASSIGNMENT_PUBLIC, r1cs::tests::R1CS_ASSIGNMENT_PRIVATE);
+        let proof = prove(
+            &crs,
+            qap,
+            r1cs::tests::R1CS_ASSIGNMENT_PUBLIC,
+            r1cs::tests::R1CS_ASSIGNMENT_PRIVATE,
+        );
+        assert!(proof.verify(&crs, &r1cs::tests::R1CS_ASSIGNMENT_PUBLIC));
     }
 }

@@ -1,7 +1,7 @@
 use bls12_381::Scalar;
 
 use crate::{
-    polynomial::{lagrange, Polynomial, self},
+    polynomial::{self, lagrange, Polynomial},
     roots_of_unity::roots_of_unity,
 };
 
@@ -99,9 +99,12 @@ impl<const PUBLIC_WITNESS: usize, const PRIVATE_WITNESS: usize, const CONSTRAINT
         }
 
         for i in 0..PRIVATE_WITNESS {
-            qap.private_v[i] = lagrange::interpolate(&basis_polynomials, &r1cs.a.private_entries[i]);
-            qap.private_w[i] = lagrange::interpolate(&basis_polynomials, &r1cs.b.private_entries[i]);
-            qap.private_y[i] = lagrange::interpolate(&basis_polynomials, &r1cs.c.private_entries[i]);
+            qap.private_v[i] =
+                lagrange::interpolate(&basis_polynomials, &r1cs.a.private_entries[i]);
+            qap.private_w[i] =
+                lagrange::interpolate(&basis_polynomials, &r1cs.b.private_entries[i]);
+            qap.private_y[i] =
+                lagrange::interpolate(&basis_polynomials, &r1cs.c.private_entries[i]);
         }
 
         qap

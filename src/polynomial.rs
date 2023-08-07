@@ -1,6 +1,6 @@
 use std::{
     fmt::Debug,
-    iter::{Sum, self},
+    iter::{self, Sum},
     ops::{Add, Div, Mul, MulAssign, Sub},
 };
 
@@ -12,6 +12,37 @@ pub const ZERO: Polynomial = Polynomial { terms: Vec::new() };
 #[derive(Clone, Eq, PartialEq, Default)]
 pub struct Polynomial {
     terms: Vec<Scalar>,
+}
+
+/// The degree of a polynomial.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct PolynomialDegree {
+    degree: usize,
+}
+
+impl Ord for PolynomialDegree {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.degree
+            .wrapping_add(1)
+            .cmp(&other.degree.wrapping_add(1))
+    }
+}
+
+impl PartialOrd for PolynomialDegree {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PolynomialDegree {
+    /// Get the degree of the polynomial if it isn't the zero polynomial.
+    pub fn degree_non_zero_polynomial(&self) -> Option<usize> {
+        Some(self.degree).filter(|deg| *deg != usize::MAX)
+    }
+
+    pub fn is_zero_polynomial(&self) -> bool {
+        self.degree == usize::MAX
+    }
 }
 
 impl Debug for Polynomial {
@@ -42,45 +73,63 @@ impl Polynomial {
             terms: iter::once(-Scalar::one())
                 .chain(iter::repeat(Scalar::zero()).take(degree - 1))
                 .chain(iter::once(Scalar::one()))
-                .collect()
+                .collect(),
         }
     }
 
+    /// Get the zero polynomial.
+    ///
+    /// # Example
+    /// use groth16::polynomial::Polynomial;
+    /// use bls12_381::Scalar;
+    ///
+    /// assert_eq!(Polynomial::zero().evaluate(&Scalar::one()), Scalar::zero());
     pub const fn zero() -> Self {
-        Polynomial {
-            terms: Vec::new()
-        }
+        Polynomial { terms: Vec::new() }
     }
 
     /// The identity polynomial, equal to constant 1.
-    /// 
+    ///
     /// # Example
     /// ```rust
-    /// assert_eq!(Polynomial::identity().evaluate(Scalar::one()), Scalar::one());
+    /// use groth16::polynomial::Polynomial;
+    /// use bls12_381::Scalar;
+    ///
+    /// assert_eq!(Polynomial::identity().evaluate(&Scalar::one()), Scalar::one());
     /// assert_eq!(Polynomial::identity() * Polynomial::identity(), Polynomial::identity());
     /// ```
     pub fn identity() -> Self {
-        Polynomial { terms: vec![Scalar::one()] }
+        Polynomial {
+            terms: vec![Scalar::one()],
+        }
     }
 
     /// Get the polynomial corresponding to (x - `const_term`).
-    /// 
+    ///
     /// # Example
     /// ```rust
+    /// use groth16::polynomial::Polynomial;
+    /// use bls12_381::Scalar;
+    ///
     /// let poly = Polynomial::x_minus_const(5.into());
-    /// assert_eq!(poly.evaluate(5.into()), Scalar::zero());
+    /// assert_eq!(poly.evaluate(&5.into()), Scalar::zero());
     /// ```
     pub fn x_minus_const(const_term: Scalar) -> Self {
-        Polynomial { terms: vec![-const_term, Scalar::one()] }
+        Polynomial {
+            terms: vec![-const_term, Scalar::one()],
+        }
     }
 
-    /// Get the degree of this polynomial. Returns usize::MAX for zero-polynomials
-    pub fn degree(&self) -> usize {
-        self.terms.len().wrapping_sub(1)
+    /// Get the degree of this polynomial. Returns usize::MAX for zero-polynomials.
+    pub fn degree(&self) -> PolynomialDegree {
+        PolynomialDegree {
+            degree: self.terms.len().wrapping_sub(1),
+        }
     }
 
     pub fn evaluate(&self, x: &Scalar) -> Scalar {
-        self.terms.iter()
+        self.terms
+            .iter()
             .rev()
             .fold(Scalar::zero(), |value, term| value * x + term)
     }
@@ -101,7 +150,12 @@ impl Polynomial {
 
     /// Trim highest powers of x with zero coefficients
     fn trim(&mut self) {
-        let to_truncate = self.terms.iter().rev().take_while(|coef| **coef == Scalar::zero()).count();
+        let to_truncate = self
+            .terms
+            .iter()
+            .rev()
+            .take_while(|coef| **coef == Scalar::zero())
+            .count();
         self.terms.truncate(self.terms.len() - to_truncate);
     }
 
@@ -129,11 +183,11 @@ impl Mul for Polynomial {
             return Polynomial::zero();
         }
 
-        let degree_1 = self.degree();
-        let degree_2 = rhs.degree();
+        let degree_1 = self.degree().degree_non_zero_polynomial().unwrap();
+        let degree_2 = rhs.degree().degree_non_zero_polynomial().unwrap();
         let new_degree = degree_1 + degree_2;
         let mut polynomial = Polynomial {
-            terms: vec![Scalar::zero(); new_degree + 1]
+            terms: vec![Scalar::zero(); new_degree + 1],
         };
         for i in 0..=new_degree {
             for lhs_index in i.saturating_sub(degree_2)..=degree_1.min(i) {
@@ -223,17 +277,23 @@ impl Div for &Polynomial {
         assert!(self.is_trimmed());
         assert!(rhs.is_trimmed());
 
+        dbg!(&self, &rhs);
+
         // At the end of this function,
         // self = rhs * quotient + remainder
         let rhs_degree = rhs.degree();
-        let resulting_degree = self.degree() - rhs_degree;
+        let resulting_terms = (self.terms.len() + 1).saturating_sub(rhs.terms.len());
         let mut remainder = self.clone();
-        let mut quotient = Polynomial { terms: vec![Scalar::zero(); resulting_degree + 1]};
+        let mut quotient = Polynomial {
+            terms: vec![Scalar::zero(); resulting_terms],
+        };
 
         while remainder != Polynomial::zero() && remainder.degree() >= rhs.degree() {
             // Divide leading coefficients
-            let quotient_x_power = remainder.degree() - rhs_degree;
-            quotient.terms[quotient_x_power] = remainder.highest_power_term().unwrap() * rhs.highest_power_term().unwrap().invert().unwrap();
+            let quotient_x_power = remainder.degree().degree_non_zero_polynomial().unwrap()
+                - rhs_degree.degree_non_zero_polynomial().unwrap();
+            quotient.terms[quotient_x_power] = remainder.highest_power_term().unwrap()
+                * rhs.highest_power_term().unwrap().invert().unwrap();
             remainder = self.clone() - quotient.clone() * rhs.clone();
         }
         DivResult {
@@ -320,7 +380,9 @@ mod tests {
     #[test]
     fn test_mul_by_zero() {
         let poly_1 = Polynomial::zero();
-        let poly_2 = Polynomial { terms: vec![0.into(), 3.into(), 5.into()]};
+        let poly_2 = Polynomial {
+            terms: vec![0.into(), 3.into(), 5.into()],
+        };
         assert_eq!(poly_1.clone() * poly_2.clone(), Polynomial::zero());
         assert_eq!(poly_2.clone() * poly_1.clone(), Polynomial::zero());
     }
@@ -361,5 +423,20 @@ mod tests {
                 }
             }
         )
+    }
+
+    #[test]
+    fn test_div_3() {
+        let poly_1 = Polynomial::zero();
+        let poly_2 = Polynomial {
+            terms: vec![4.into(), 5.into(), 3.into()],
+        };
+        assert_eq!(
+            &poly_1 / &poly_2,
+            DivResult {
+                quotient: Polynomial::zero(),
+                remainder: Polynomial::zero()
+            }
+        );
     }
 }
